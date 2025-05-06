@@ -113,7 +113,7 @@ app.get('/api/search', async (req, res) => {
     const type = searchType === 'advertiser' ? 'ADVERTISER_NAME' : 'KEYWORD_UNORDERED';
     
     // Construct the Facebook Ad Library API URL - usando a versão mais recente v20.0
-    const apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${facebookAccessToken}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
+    const apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${facebookAccessToken}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&languages=pt_BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
     
     console.log('Calling Facebook API with URL:', apiUrl.replace(facebookAccessToken, 'TOKEN_HIDDEN'));
     
