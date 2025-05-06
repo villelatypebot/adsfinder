@@ -25,13 +25,16 @@ const app = express();
 const port = process.env.PORT || config.port || 3001;
 
 // Token de acesso do Facebook (prioriza a variável de ambiente)
-const facebookAccessToken = process.env.FACEBOOK_ACCESS_TOKEN || config.facebookAccessToken;
+let facebookAccessToken = process.env.FACEBOOK_ACCESS_TOKEN || config.facebookAccessToken;
+
+// Variável para armazenar o token inserido pelo usuário
+let userProvidedToken = '';
 
 // Verificar se o token do Facebook é válido
-async function verifyFacebookToken() {
+async function verifyFacebookToken(token) {
   try {
     console.log('Verificando token do Facebook...');
-    const response = await axios.get(`https://graph.facebook.com/v20.0/me?access_token=${facebookAccessToken}`);
+    const response = await axios.get(`https://graph.facebook.com/v20.0/me?access_token=${token}`);
     console.log('Token do Facebook é válido:', response.data);
     return true;
   } catch (error) {
@@ -42,10 +45,35 @@ async function verifyFacebookToken() {
   }
 }
 
-// Verificar token ao iniciar
-verifyFacebookToken().then(isValid => {
+// Será executado quando o usuário submeter um novo token
+app.post('/api/set-token', express.json(), async (req, res) => {
+  try {
+    const { token } = req.body;
+    
+    if (!token) {
+      return res.status(400).json({ success: false, message: 'Token não fornecido' });
+    }
+    
+    // Verificar se o token é válido
+    const isValid = await verifyFacebookToken(token);
+    
+    if (isValid) {
+      // Salvar o token para uso nas requisições
+      userProvidedToken = token;
+      return res.json({ success: true, message: 'Token válido e salvo com sucesso!' });
+    } else {
+      return res.status(400).json({ success: false, message: 'Token inválido ou expirado' });
+    }
+  } catch (error) {
+    console.error('Erro ao definir token:', error);
+    return res.status(500).json({ success: false, message: 'Erro ao processar solicitação' });
+  }
+});
+
+// Verificar token ao iniciar (usando o token do config por padrão)
+verifyFacebookToken(facebookAccessToken).then(isValid => {
   if (!isValid) {
-    console.error('ATENÇÃO: O token do Facebook parece ser inválido ou expirado. A aplicação pode não funcionar corretamente.');
+    console.warn('ATENÇÃO: O token do Facebook padrão parece ser inválido ou expirado. Por favor, forneça um token válido pela interface da aplicação.');
   }
 });
 
@@ -108,15 +136,26 @@ app.get('/api/search', async (req, res) => {
     if (!query) {
       return res.status(400).json({ error: 'Search query is required' });
     }
+
+    // Usar o token fornecido pelo usuário se disponível, caso contrário, usar o token padrão
+    const tokenToUse = userProvidedToken || facebookAccessToken;
+    
+    if (!tokenToUse || tokenToUse === 'REPLACE_WITH_YOUR_NEW_FACEBOOK_ACCESS_TOKEN') {
+      return res.status(400).json({ 
+        error: 'Token do Facebook não configurado', 
+        needToken: true,
+        message: 'Por favor, forneça um token de acesso válido do Facebook para continuar.'
+      });
+    }
     
     // Search type modificado para usar apenas valores suportados
     // ADVERTISER_NAME não é mais suportado pela API de anúncios
     const type = searchType === 'advertiser' ? 'KEYWORD_UNORDERED' : 'KEYWORD_UNORDERED';
     
     // Construct the Facebook Ad Library API URL - usando a versão mais recente v20.0
-    const apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${facebookAccessToken}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&languages=pt_BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
+    const apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${tokenToUse}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&languages=pt_BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
     
-    console.log('Calling Facebook API with URL:', apiUrl.replace(facebookAccessToken, 'TOKEN_HIDDEN'));
+    console.log('Calling Facebook API with URL:', apiUrl.replace(tokenToUse, 'TOKEN_HIDDEN'));
     
     const response = await axios.get(apiUrl);
     
@@ -270,12 +309,23 @@ const htmlContent = `<!DOCTYPE html>
     <div class="container">
       <a class="navbar-brand" href="#">Facebook Ads Downloader</a>
       <div class="d-flex">
+        <button class="btn btn-outline-light btn-sm me-2" data-bs-toggle="modal" data-bs-target="#tokenModal">
+          <i class="bi bi-key-fill"></i> Configurar Token
+        </button>
         <a href="/logs" class="btn btn-outline-light btn-sm">Ver Logs</a>
       </div>
     </div>
   </nav>
 
   <div class="container mt-4">
+    <div id="tokenAlert" class="alert alert-warning" style="display: none;">
+      <i class="bi bi-exclamation-triangle-fill"></i> 
+      <strong>Atenção:</strong> Token do Facebook não configurado ou inválido. 
+      <button class="btn btn-sm btn-warning ms-2" data-bs-toggle="modal" data-bs-target="#tokenModal">
+        Configurar Token
+      </button>
+    </div>
+
     <div class="row">
       <div class="col-md-12">
         <div class="card">
@@ -348,6 +398,41 @@ const htmlContent = `<!DOCTYPE html>
       </div>
     </div>
     
+    <!-- Token Configuration Modal -->
+    <div class="modal fade" id="tokenModal" tabindex="-1" aria-labelledby="tokenModalLabel" aria-hidden="true">
+      <div class="modal-dialog modal-lg">
+        <div class="modal-content">
+          <div class="modal-header bg-primary text-white">
+            <h5 class="modal-title" id="tokenModalLabel">Configurar Token do Facebook</h5>
+            <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal" aria-label="Close"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-info">
+              <h6><i class="bi bi-info-circle-fill"></i> Como obter seu Token do Facebook:</h6>
+              <ol>
+                <li>Acesse <a href="https://developers.facebook.com/tools/explorer/" target="_blank">Facebook Graph API Explorer</a></li>
+                <li>Selecione seu App no menu suspenso</li>
+                <li>Adicione as permissões: <code>ads_read</code>, <code>ads_management</code></li>
+                <li>Clique em "Generate Access Token"</li>
+                <li>Copie o token gerado e cole abaixo</li>
+              </ol>
+            </div>
+            <div id="tokenResponseMessage" class="alert" style="display: none;"></div>
+            <form id="tokenForm">
+              <div class="mb-3">
+                <label for="facebookToken" class="form-label">Token de Acesso do Facebook</label>
+                <input type="text" class="form-control" id="facebookToken" placeholder="Cole seu token de acesso aqui" required>
+                <div class="form-text">Este token será armazenado apenas na memória do servidor e não será salvo permanentemente.</div>
+              </div>
+              <button type="submit" class="btn btn-primary" id="saveTokenBtn">
+                <i class="bi bi-save"></i> Salvar e Verificar Token
+              </button>
+            </form>
+          </div>
+        </div>
+      </div>
+    </div>
+    
     <div class="modal fade" id="downloadModal" tabindex="-1" aria-labelledby="downloadModalLabel" aria-hidden="true">
       <div class="modal-dialog">
         <div class="modal-content">
@@ -405,6 +490,22 @@ body {
 
 .card-header {
   font-weight: 500;
+}
+
+/* Token modal styles */
+#tokenForm .form-control {
+  font-family: monospace;
+  letter-spacing: 0.5px;
+}
+
+#tokenAlert {
+  border-left: 4px solid #ffc107;
+}
+
+.alert code {
+  background-color: rgba(0, 0, 0, 0.05);
+  padding: 2px 4px;
+  border-radius: 3px;
 }
 
 /* Ad result card styles */
@@ -539,18 +640,94 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
   const selectAllBtn = document.getElementById('selectAllBtn');
   const downloadBtn = document.getElementById('downloadBtn');
   const downloadType = document.getElementById('downloadType');
+  const tokenForm = document.getElementById('tokenForm');
+  const tokenAlert = document.getElementById('tokenAlert');
+  const tokenResponseMessage = document.getElementById('tokenResponseMessage');
   
   // Bootstrap modals
+  const tokenModal = new bootstrap.Modal(document.getElementById('tokenModal'));
   const downloadModal = new bootstrap.Modal(document.getElementById('downloadModal'));
   const downloadCompleteModal = new bootstrap.Modal(document.getElementById('downloadCompleteModal'));
   
   // Store the search results data
   let searchResults = [];
   
+  // Check if we need to show the token alert
+  checkTokenStatus();
+  
   // Event listeners
   searchForm.addEventListener('submit', performSearch);
   selectAllBtn.addEventListener('click', toggleSelectAll);
   downloadBtn.addEventListener('click', downloadSelectedAds);
+  tokenForm.addEventListener('submit', saveToken);
+  
+  // Function to check if token is needed
+  function checkTokenStatus() {
+    // Basic check - will be confirmed when first search is attempted
+    if (localStorage.getItem('hasValidToken') !== 'true') {
+      tokenAlert.style.display = 'block';
+    }
+  }
+  
+  // Save and verify token
+  async function saveToken(e) {
+    e.preventDefault();
+    
+    const tokenInput = document.getElementById('facebookToken');
+    const token = tokenInput.value.trim();
+    
+    if (!token) {
+      showTokenResponse('Por favor, insira um token válido.', 'danger');
+      return;
+    }
+    
+    try {
+      // Disable the submit button and show loading state
+      const saveButton = document.getElementById('saveTokenBtn');
+      const originalButtonText = saveButton.innerHTML;
+      saveButton.disabled = true;
+      saveButton.innerHTML = '<span class="spinner-border spinner-border-sm" role="status" aria-hidden="true"></span> Verificando...';
+      
+      // Submit token to server
+      const response = await fetch('/api/set-token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json'
+        },
+        body: JSON.stringify({ token })
+      });
+      
+      const result = await response.json();
+      
+      // Reset button state
+      saveButton.disabled = false;
+      saveButton.innerHTML = originalButtonText;
+      
+      if (result.success) {
+        showTokenResponse(result.message, 'success');
+        localStorage.setItem('hasValidToken', 'true');
+        tokenAlert.style.display = 'none';
+        
+        // Close the modal after a brief delay to show success message
+        setTimeout(() => {
+          tokenModal.hide();
+        }, 2000);
+      } else {
+        showTokenResponse(result.message || 'Token inválido ou expirado.', 'danger');
+        localStorage.removeItem('hasValidToken');
+      }
+    } catch (error) {
+      console.error('Error saving token:', error);
+      showTokenResponse('Erro ao processar o token. Tente novamente.', 'danger');
+    }
+  }
+  
+  // Display token response message
+  function showTokenResponse(message, type) {
+    tokenResponseMessage.textContent = message;
+    tokenResponseMessage.className = \`alert alert-\${type}\`;
+    tokenResponseMessage.style.display = 'block';
+  }
   
   // Search for ads via the API
   async function performSearch(e) {
@@ -578,9 +755,29 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
       // Hide loading
       loadingResults.style.display = 'none';
       
+      // Check if we need a token
+      if (data.needToken) {
+        tokenAlert.style.display = 'block';
+        resultsContainer.innerHTML = \`
+          <div class="col-12">
+            <div class="alert alert-warning">
+              <i class="bi bi-exclamation-triangle-fill"></i> \${data.message || 'Token do Facebook não configurado.'}
+              <button class="btn btn-sm btn-warning ms-2" data-bs-toggle="modal" data-bs-target="#tokenModal">
+                Configurar Token
+              </button>
+            </div>
+          </div>
+        \`;
+        return;
+      }
+      
       if (data.data && data.data.length > 0) {
         searchResults = data.data;
         displayResults(searchResults);
+        
+        // Update token status if search was successful
+        localStorage.setItem('hasValidToken', 'true');
+        tokenAlert.style.display = 'none';
       } else {
         noResults.style.display = 'block';
         searchResults = [];
@@ -736,16 +933,6 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
   }
 });`;
 
-// Start the server
-app.listen(port, () => {
-  console.log(`Server running at http://localhost:${port}`);
-  
-  // Abrir o navegador automaticamente apenas em ambiente de desenvolvimento (não no Render)
-  if (process.env.NODE_ENV !== 'production') {
-    open(`http://localhost:${port}`);
-  }
-});
-
 // Página de logs
 app.get('/logs', (req, res) => {
   const logsHtml = `
@@ -756,6 +943,7 @@ app.get('/logs', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Logs - Facebook Ads Downloader</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.1/font/bootstrap-icons.css">
     <style>
       .log-error { color: #dc3545; }
       .log-info { color: #0d6efd; }
@@ -772,6 +960,9 @@ app.get('/logs', (req, res) => {
       <div class="container">
         <a class="navbar-brand" href="/">Facebook Ads Downloader</a>
         <div>
+          <button class="btn btn-outline-light btn-sm me-2" onclick="window.location.href='/#' + new Date().getTime()" data-bs-toggle="modal" data-bs-target="#tokenModal">
+            <i class="bi bi-key-fill"></i> Configurar Token
+          </button>
           <a href="/" class="btn btn-outline-light btn-sm">Voltar</a>
         </div>
       </div>
@@ -834,4 +1025,14 @@ app.get('/logs', (req, res) => {
   `;
   
   res.send(logsHtml);
+});
+
+// Start the server
+app.listen(port, () => {
+  console.log(`Server running at http://localhost:${port}`);
+  
+  // Abrir o navegador automaticamente apenas em ambiente de desenvolvimento (não no Render)
+  if (process.env.NODE_ENV !== 'production') {
+    open(`http://localhost:${port}`);
+  }
 }); 
