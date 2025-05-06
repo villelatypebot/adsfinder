@@ -12,14 +12,18 @@ Uma aplicação para fazer download de anúncios da Biblioteca de Anúncios do F
 
 ## Requisitos
 
-- Node.js 12 ou superior
+- Node.js 16 ou superior
 - NPM ou Yarn
+
+## Sobre a Estrutura
+
+Esta aplicação utiliza uma abordagem de código unificado, onde todo o HTML, CSS e JavaScript estão embutidos no arquivo principal `index.js`. Isso facilita o deploy em plataformas como o Render, eliminando a necessidade de configurar pastas separadas.
 
 ## Instalação
 
 1. Clone o repositório:
 ```
-git clone https://seu-repositorio/facebook-ads-downloader.git
+git clone https://github.com/seu-usuario/facebook-ads-downloader.git
 cd facebook-ads-downloader
 ```
 
@@ -37,7 +41,7 @@ npm install
 npm start
 ```
 
-2. A aplicação será aberta automaticamente no seu navegador padrão (ou acesse http://localhost:3000).
+2. Acesse http://localhost:3000 no seu navegador.
 
 3. Como usar:
    - Digite uma palavra-chave ou nome de anunciante na caixa de pesquisa
@@ -92,10 +96,7 @@ Após o deploy, o Render fornecerá um URL para acessar a aplicação.
 
 ## Estrutura do Projeto
 
-- `index.js` - Servidor backend e rotas API
-- `public/index.html` - Interface de usuário
-- `public/script.js` - Lógica do frontend
-- `public/styles.css` - Estilos da aplicação
+- `index.js` - Servidor backend, rotas API e conteúdo frontend (HTML, CSS, JS)
 - `config.js` - Configurações (token de acesso, porta, etc.)
 - `downloads/` - Pasta onde os anúncios baixados são armazenados
 
