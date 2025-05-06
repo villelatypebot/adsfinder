@@ -1,0 +1,25 @@
+{
+  "name": "facebook-ads-downloader",
+  "version": "1.0.0",
+  "description": "Application to download Facebook ads from the Facebook Ad Library",
+  "main": "index.js",
+  "engines": {
+    "node": ">=16.14.0"
+  },
+  "scripts": {
+    "start": "node index.js",
+    "dev": "nodemon index.js"
+  },
+  "dependencies": {
+    "axios": "^1.6.2",
+    "dotenv": "^16.3.1",
+    "express": "^4.18.2",
+    "form-data": "^4.0.0",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^2.7.0",
+    "open": "^8.4.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  }
+} 

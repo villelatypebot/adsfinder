@@ -1,0 +1,14 @@
+services:
+  - type: web
+    name: facebook-ads-downloader
+    runtime: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node index.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: 10000
+      - key: FACEBOOK_ACCESS_TOKEN
+        sync: false # O usuário precisará definir este valor manualmente no dashboard do Render 
