@@ -31,7 +31,7 @@ const facebookAccessToken = process.env.FACEBOOK_ACCESS_TOKEN || config.facebook
 async function verifyFacebookToken() {
   try {
     console.log('Verificando token do Facebook...');
-    const response = await axios.get(`https://graph.facebook.com/v18.0/me?access_token=${facebookAccessToken}`);
+    const response = await axios.get(`https://graph.facebook.com/v20.0/me?access_token=${facebookAccessToken}`);
     console.log('Token do Facebook é válido:', response.data);
     return true;
   } catch (error) {
@@ -112,8 +112,8 @@ app.get('/api/search', async (req, res) => {
     // Search type can be 'keyword' or 'advertiser'
     const type = searchType === 'advertiser' ? 'ADVERTISER_NAME' : 'KEYWORD_UNORDERED';
     
-    // Construct the Facebook Ad Library API URL
-    const apiUrl = `https://graph.facebook.com/v18.0/ads_archive?access_token=${facebookAccessToken}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,funding_entity,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
+    // Construct the Facebook Ad Library API URL - usando a versão mais recente v20.0
+    const apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${facebookAccessToken}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
     
     console.log('Calling Facebook API with URL:', apiUrl.replace(facebookAccessToken, 'TOKEN_HIDDEN'));
     
