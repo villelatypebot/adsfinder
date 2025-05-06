@@ -27,6 +27,28 @@ const port = process.env.PORT || config.port;
 // Token de acesso do Facebook (prioriza a variável de ambiente)
 const facebookAccessToken = process.env.FACEBOOK_ACCESS_TOKEN || config.facebookAccessToken;
 
+// Verificar se o token do Facebook é válido
+async function verifyFacebookToken() {
+  try {
+    console.log('Verificando token do Facebook...');
+    const response = await axios.get(`https://graph.facebook.com/v18.0/me?access_token=${facebookAccessToken}`);
+    console.log('Token do Facebook é válido:', response.data);
+    return true;
+  } catch (error) {
+    console.error('Erro ao verificar token do Facebook:');
+    console.error('Status:', error.response?.status);
+    console.error('Mensagem de erro:', error.response?.data?.error?.message || error.message);
+    return false;
+  }
+}
+
+// Verificar token ao iniciar
+verifyFacebookToken().then(isValid => {
+  if (!isValid) {
+    console.error('ATENÇÃO: O token do Facebook parece ser inválido ou expirado. A aplicação pode não funcionar corretamente.');
+  }
+});
+
 // Setup for file uploads
 const upload = multer({ dest: 'uploads/' });
 
@@ -36,6 +58,30 @@ app.use(express.urlencoded({ extended: true }));
 
 // Serve static files from the public directory
 app.use(express.static(path.join(__dirname, 'public')));
+
+// Armazenar os logs para exibir na interface
+const appLogs = [];
+
+// Sobrescrever console.log e console.error para capturar os logs
+const originalConsoleLog = console.log;
+const originalConsoleError = console.error;
+
+console.log = function() {
+  const args = Array.from(arguments);
+  appLogs.push({ type: 'info', message: args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' '), timestamp: new Date() });
+  originalConsoleLog.apply(console, args);
+};
+
+console.error = function() {
+  const args = Array.from(arguments);
+  appLogs.push({ type: 'error', message: args.map(arg => typeof arg === 'object' ? JSON.stringify(arg) : arg).join(' '), timestamp: new Date() });
+  originalConsoleError.apply(console, args);
+};
+
+// Rota para obter os logs
+app.get('/api/logs', (req, res) => {
+  res.json(appLogs);
+});
 
 // Root route - serve the HTML page
 app.get('/', (req, res) => {
@@ -57,6 +103,8 @@ app.get('/api/search', async (req, res) => {
   try {
     const { query, searchType } = req.query;
     
+    console.log('Search request received:', { query, searchType });
+    
     if (!query) {
       return res.status(400).json({ error: 'Search query is required' });
     }
@@ -67,14 +115,24 @@ app.get('/api/search', async (req, res) => {
     // Construct the Facebook Ad Library API URL
     const apiUrl = `https://graph.facebook.com/v18.0/ads_archive?access_token=${facebookAccessToken}&ad_type=ALL&ad_active_status=ALL&country=BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,funding_entity,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
     
+    console.log('Calling Facebook API with URL:', apiUrl.replace(facebookAccessToken, 'TOKEN_HIDDEN'));
+    
     const response = await axios.get(apiUrl);
+    
+    console.log('Facebook API response:', JSON.stringify(response.data, null, 2));
     
     res.json(response.data);
   } catch (error) {
-    console.error('Error searching ads:', error.response?.data || error.message);
+    console.error('Error searching ads:');
+    console.error('Status:', error.response?.status);
+    console.error('Status Text:', error.response?.statusText);
+    console.error('Error Data:', error.response?.data);
+    console.error('Error Message:', error.message);
+    
     res.status(500).json({ 
       error: 'Failed to search ads', 
-      details: error.response?.data || error.message 
+      details: error.response?.data || error.message,
+      statusCode: error.response?.status
     });
   }
 });
@@ -210,6 +268,9 @@ const htmlContent = `<!DOCTYPE html>
   <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
     <div class="container">
       <a class="navbar-brand" href="#">Facebook Ads Downloader</a>
+      <div class="d-flex">
+        <a href="/logs" class="btn btn-outline-light btn-sm">Ver Logs</a>
+      </div>
     </div>
   </nav>
 
@@ -682,4 +743,94 @@ app.listen(port, () => {
   if (process.env.NODE_ENV !== 'production') {
     open(`http://localhost:${port}`);
   }
+});
+
+// Página de logs
+app.get('/logs', (req, res) => {
+  const logsHtml = `
+  <!DOCTYPE html>
+  <html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Logs - Facebook Ads Downloader</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+      .log-error { color: #dc3545; }
+      .log-info { color: #0d6efd; }
+      .log-container {
+        max-height: 500px;
+        overflow-y: auto;
+        font-family: monospace;
+        font-size: 0.9rem;
+      }
+    </style>
+  </head>
+  <body>
+    <nav class="navbar navbar-expand-lg navbar-dark bg-primary">
+      <div class="container">
+        <a class="navbar-brand" href="/">Facebook Ads Downloader</a>
+        <div>
+          <a href="/" class="btn btn-outline-light btn-sm">Voltar</a>
+        </div>
+      </div>
+    </nav>
+
+    <div class="container mt-4">
+      <div class="card">
+        <div class="card-header bg-dark text-white d-flex justify-content-between align-items-center">
+          <h5 class="mb-0">Logs da Aplicação</h5>
+          <button id="refreshBtn" class="btn btn-sm btn-outline-light">Atualizar</button>
+        </div>
+        <div class="card-body">
+          <div id="logContainer" class="log-container border p-3 rounded"></div>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      function fetchLogs() {
+        fetch('/api/logs')
+          .then(response => response.json())
+          .then(logs => {
+            const container = document.getElementById('logContainer');
+            container.innerHTML = '';
+            
+            if (logs.length === 0) {
+              container.innerHTML = '<p class="text-muted">Nenhum log disponível.</p>';
+              return;
+            }
+            
+            logs.forEach(log => {
+              const logElement = document.createElement('div');
+              logElement.className = \`log-\${log.type}\`;
+              const time = new Date(log.timestamp).toLocaleTimeString();
+              logElement.innerHTML = \`[\${time}] \${log.message}\`;
+              container.appendChild(logElement);
+            });
+            
+            // Rolar para o final
+            container.scrollTop = container.scrollHeight;
+          })
+          .catch(error => {
+            console.error('Erro ao buscar logs:', error);
+            document.getElementById('logContainer').innerHTML = 
+              \`<p class="text-danger">Erro ao carregar logs: \${error.message}</p>\`;
+          });
+      }
+      
+      // Carregar logs ao iniciar
+      document.addEventListener('DOMContentLoaded', fetchLogs);
+      
+      // Configurar botão de atualização
+      document.getElementById('refreshBtn').addEventListener('click', fetchLogs);
+      
+      // Atualizar logs a cada 5 segundos
+      setInterval(fetchLogs, 5000);
+    </script>
+  </body>
+  </html>
+  `;
+  
+  res.send(logsHtml);
 }); 
