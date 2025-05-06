@@ -22,7 +22,7 @@ ensureDirectoryExists(path.join(__dirname, 'downloads'));
 ensureDirectoryExists(path.join(__dirname, 'uploads'));
 
 const app = express();
-const port = process.env.PORT || config.port;
+const port = process.env.PORT || config.port || 3001;
 
 // Token de acesso do Facebook (prioriza a variável de ambiente)
 const facebookAccessToken = process.env.FACEBOOK_ACCESS_TOKEN || config.facebookAccessToken;
@@ -109,8 +109,9 @@ app.get('/api/search', async (req, res) => {
       return res.status(400).json({ error: 'Search query is required' });
     }
     
-    // Search type can be 'keyword' or 'advertiser'
-    const type = searchType === 'advertiser' ? 'ADVERTISER_NAME' : 'KEYWORD_UNORDERED';
+    // Search type modificado para usar apenas valores suportados
+    // ADVERTISER_NAME não é mais suportado pela API de anúncios
+    const type = searchType === 'advertiser' ? 'KEYWORD_UNORDERED' : 'KEYWORD_UNORDERED';
     
     // Construct the Facebook Ad Library API URL - usando a versão mais recente v20.0
     const apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${facebookAccessToken}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&languages=pt_BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
