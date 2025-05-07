@@ -129,9 +129,9 @@ app.get('/script.js', (req, res) => {
 // API route to search ads by keyword
 app.get('/api/search', async (req, res) => {
   try {
-    const { query, searchType } = req.query;
+    const { query, searchType, country, limit, adActiveStatus, adType } = req.query;
     
-    console.log('Search request received:', { query, searchType });
+    console.log('Search request received:', { query, searchType, country, limit, adActiveStatus, adType });
     
     if (!query) {
       return res.status(400).json({ error: 'Search query is required' });
@@ -148,12 +148,85 @@ app.get('/api/search', async (req, res) => {
       });
     }
     
-    // Search type modificado para usar apenas valores suportados
-    // ADVERTISER_NAME não é mais suportado pela API de anúncios
-    const type = searchType === 'advertiser' ? 'KEYWORD_UNORDERED' : 'KEYWORD_UNORDERED';
+    // Verificar se o token ainda é válido
+    const isValid = await verifyFacebookToken(tokenToUse);
+    if (!isValid) {
+      return res.status(400).json({ 
+        error: 'Token do Facebook inválido ou expirado', 
+        needToken: true,
+        message: 'Seu token de acesso expirou. Por favor, forneça um novo token.'
+      });
+    }
     
-    // Construct the Facebook Ad Library API URL - usando a versão mais recente v20.0
-    const apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${tokenToUse}&ad_type=ALL&ad_active_status=ALL&ad_reached_countries=BR&languages=pt_BR&search_terms=${encodeURIComponent(query)}&search_type=${type}&fields=id,ad_creation_time,ad_creative_bodies,ad_creative_link_titles,ad_creative_link_descriptions,ad_creative_link_captions,page_name,page_id,ad_delivery_start_time,ad_delivery_stop_time,ad_snapshot_url,ad_creative_link_url,ad_creative_images,ad_creative_videos`;
+    // Construir URL base da API - USANDO OS MESMOS PARÂMETROS DA URL DE BIBLIOTECA DE ANÚNCIOS
+    // Exemplo: https://www.facebook.com/ads/library/?active_status=active&ad_type=all&country=BR&is_targeted_country=false&media_type=all&q=chatbot&search_type=keyword_unordered
+    let apiUrl = `https://graph.facebook.com/v20.0/ads_archive?access_token=${tokenToUse}`;
+    
+    // Adicionar parâmetros de busca
+    apiUrl += `&search_terms=${encodeURIComponent(query)}`;
+    apiUrl += `&search_type=KEYWORD_UNORDERED`;
+    
+    // Adicionar limite de resultados
+    const resultLimit = parseInt(limit) || 25;
+    apiUrl += `&limit=${resultLimit}`;
+    
+    // Adicionar status do anúncio
+    if (adActiveStatus && adActiveStatus !== 'ALL') {
+      apiUrl += `&ad_active_status=${adActiveStatus}`;
+    } else {
+      apiUrl += '&ad_active_status=ACTIVE'; // Usar ACTIVE como padrão, como na URL do Facebook
+    }
+    
+    // Adicionar tipo de anúncio
+    if (adType && adType !== 'ALL') {
+      apiUrl += `&ad_type=${adType}`;
+    } else {
+      apiUrl += '&ad_type=ALL';
+    }
+    
+    // O parâmetro de país é obrigatório
+    if (country && country !== 'global') {
+      // Se for Brasil, garantir que estamos buscando APENAS anúncios do Brasil
+      if (country === 'BR') {
+        console.log(`Aplicando filtro exclusivo para anúncios do Brasil`);
+        apiUrl += `&ad_reached_countries=BR`;
+        apiUrl += `&is_targeted_country=false`; // Parâmetro importante da URL original do Facebook
+      } else {
+        console.log(`Aplicando filtro de país: ${country}`);
+        apiUrl += `&ad_reached_countries=${country}`;
+      }
+    } else {
+      // Busca "global" - usar os países mais populares para ampliar resultados
+      console.log('Aplicando busca global com múltiplos países');
+      apiUrl += '&ad_reached_countries=US,GB,BR,CA,AU,FR,DE,ES,IT,MX';
+    }
+    
+    // Adicionar tipo de mídia (igual à URL original do Facebook)
+    apiUrl += '&media_type=ALL';
+    
+    // Campos completos a serem solicitados da API
+    const fields = [
+      'id',
+      'ad_creation_time',
+      'ad_creative_bodies',
+      'ad_creative_link_titles',
+      'ad_creative_link_descriptions',
+      'ad_creative_link_captions',
+      'page_name',
+      'page_id',
+      'ad_delivery_start_time',
+      'ad_delivery_stop_time',
+      'ad_snapshot_url',
+      'ad_creative_link_url',
+      // Solicitando imagens com todos os possíveis campos
+      'ad_creative_images{url,original_image_url,permalink_url,name,width,height,preview_image_url}',
+      'ad_creative_videos{video_url,thumbnail_url,preview_image_url,permalink_url}',
+      'targeting{geo_locations}',
+      'languages'
+    ].join(',');
+    
+    // Adicionar os campos que queremos recuperar
+    apiUrl += `&fields=${fields}`;
     
     console.log('Calling Facebook API with URL:', apiUrl.replace(tokenToUse, 'TOKEN_HIDDEN'));
     
@@ -161,7 +234,21 @@ app.get('/api/search', async (req, res) => {
     
     console.log('Facebook API response:', JSON.stringify(response.data, null, 2));
     
-    res.json(response.data);
+    // Verificar se há anúncios brasileiros nos resultados
+    if (country === 'BR' && response.data && response.data.data && response.data.data.length === 0) {
+      console.log('Nenhum anúncio encontrado especificamente para o Brasil, tentando expandir a busca...');
+      // Tentar buscar com mais parâmetros flexíveis
+      apiUrl = apiUrl.replace('&is_targeted_country=false', '');
+      
+      console.log('Calling expanded Facebook API with URL:', apiUrl.replace(tokenToUse, 'TOKEN_HIDDEN'));
+      
+      const expandedResponse = await axios.get(apiUrl);
+      console.log('Expanded Facebook API response:', JSON.stringify(expandedResponse.data, null, 2));
+      
+      res.json(expandedResponse.data);
+    } else {
+      res.json(response.data);
+    }
   } catch (error) {
     console.error('Error searching ads:');
     console.error('Status:', error.response?.status);
@@ -335,21 +422,82 @@ const htmlContent = `<!DOCTYPE html>
           <div class="card-body">
             <form id="searchForm">
               <div class="row mb-3">
-                <div class="col-md-8">
+                <div class="col-md-5">
                   <label for="searchQuery" class="form-label">Termo de Pesquisa</label>
                   <input type="text" class="form-control" id="searchQuery" placeholder="Digite uma palavra-chave ou nome do anunciante" required>
                 </div>
-                <div class="col-md-4">
+                <div class="col-md-2">
                   <label for="searchType" class="form-label">Tipo de Pesquisa</label>
                   <select class="form-select" id="searchType">
                     <option value="keyword">Por Palavra-chave</option>
                     <option value="advertiser">Por Nome do Anunciante</option>
                   </select>
                 </div>
+                <div class="col-md-3">
+                  <label for="countryFilter" class="form-label">Filtro de País</label>
+                  <select class="form-select" id="countryFilter">
+                    <option value="global">Global (Todos os Países)</option>
+                    <option value="US">Estados Unidos</option>
+                    <option value="BR">Brasil</option>
+                    <option value="GB">Reino Unido</option>
+                    <option value="ES">Espanha</option>
+                    <option value="PT">Portugal</option>
+                    <option value="FR">França</option>
+                    <option value="DE">Alemanha</option>
+                    <option value="IT">Itália</option>
+                    <option value="MX">México</option>
+                    <option value="CA">Canadá</option>
+                  </select>
+                </div>
+                <div class="col-md-2">
+                  <label for="resultLimit" class="form-label">Qtd. Resultados</label>
+                  <select class="form-select" id="resultLimit">
+                    <option value="25">25</option>
+                    <option value="50">50</option>
+                    <option value="100">100</option>
+                    <option value="250">250</option>
+                    <option value="500">500</option>
+                    <option value="1000">1000</option>
+                  </select>
+                </div>
               </div>
-              <button type="submit" class="btn btn-primary">
-                <i class="bi bi-search"></i> Pesquisar
-              </button>
+              <div class="d-flex justify-content-between">
+                <button type="submit" class="btn btn-primary">
+                  <i class="bi bi-search"></i> Pesquisar
+                </button>
+                <div class="form-check form-switch">
+                  <input class="form-check-input" type="checkbox" id="advancedSearchToggle">
+                  <label class="form-check-label" for="advancedSearchToggle">Busca avançada</label>
+                </div>
+              </div>
+              
+              <div id="advancedOptions" class="mt-3 p-3 border rounded bg-light" style="display: none;">
+                <h6>Opções Avançadas de Busca</h6>
+                <div class="row">
+                  <div class="col-md-6">
+                    <div class="mb-2">
+                      <label for="adActiveStatus" class="form-label">Status do Anúncio</label>
+                      <select class="form-select form-select-sm" id="adActiveStatus">
+                        <option value="ALL">Todos</option>
+                        <option value="ACTIVE">Ativos</option>
+                        <option value="INACTIVE">Inativos</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="col-md-6">
+                    <div class="mb-2">
+                      <label for="adType" class="form-label">Tipo de Anúncio</label>
+                      <select class="form-select form-select-sm" id="adType">
+                        <option value="ALL">Todos</option>
+                        <option value="POLITICAL_AND_ISSUE_ADS">Políticos e de Questões Sociais</option>
+                        <option value="HOUSING_ADS">Imobiliários</option>
+                        <option value="EMPLOYMENT_ADS">Emprego</option>
+                        <option value="CREDIT_ADS">Crédito</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </div>
             </form>
           </div>
         </div>
@@ -515,6 +663,8 @@ body {
   border-radius: 8px;
   overflow: hidden;
   height: 100%;
+  display: flex;
+  flex-direction: column;
 }
 
 .ad-card:hover {
@@ -524,6 +674,9 @@ body {
 
 .ad-card .card-body {
   padding: 15px;
+  flex-grow: 1;
+  display: flex;
+  flex-direction: column;
 }
 
 .ad-card .card-title {
@@ -541,6 +694,7 @@ body {
   -webkit-box-orient: vertical;
   overflow: hidden;
   margin-bottom: 12px;
+  flex-grow: 1;
 }
 
 .ad-image-container {
@@ -548,6 +702,10 @@ body {
   padding-top: 56.25%; /* 16:9 aspect ratio */
   overflow: hidden;
   background-color: #e9ecef;
+  background-image: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect><circle cx="8.5" cy="8.5" r="1.5"></circle><polyline points="21 15 16 10 5 21"></polyline></svg>');
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: 48px;
 }
 
 .ad-image {
@@ -557,6 +715,12 @@ body {
   width: 100%;
   height: 100%;
   object-fit: cover;
+  object-position: center;
+}
+
+.ad-image[src*="placeholder"] {
+  object-fit: contain;
+  padding: 10px;
 }
 
 .ad-video-indicator {
@@ -605,6 +769,25 @@ body {
   margin-bottom: 10px;
 }
 
+/* Badges */
+.badge {
+  padding: 4px 8px;
+  font-size: 11px;
+  font-weight: 500;
+  margin-left: 5px;
+  vertical-align: middle;
+}
+
+/* Advanced options toggle */
+.form-check-input:checked {
+  background-color: #0d6efd;
+  border-color: #0d6efd;
+}
+
+#advancedOptions {
+  transition: all 0.3s ease;
+}
+
 /* Loading spinner */
 .spinner-border {
   height: 3rem;
@@ -633,6 +816,12 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
   const searchForm = document.getElementById('searchForm');
   const searchQuery = document.getElementById('searchQuery');
   const searchType = document.getElementById('searchType');
+  const countryFilter = document.getElementById('countryFilter');
+  const resultLimit = document.getElementById('resultLimit');
+  const advancedSearchToggle = document.getElementById('advancedSearchToggle');
+  const advancedOptions = document.getElementById('advancedOptions');
+  const adActiveStatus = document.getElementById('adActiveStatus');
+  const adType = document.getElementById('adType');
   const resultsSection = document.getElementById('resultsSection');
   const resultsContainer = document.getElementById('resultsContainer');
   const noResults = document.getElementById('noResults');
@@ -660,6 +849,12 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
   selectAllBtn.addEventListener('click', toggleSelectAll);
   downloadBtn.addEventListener('click', downloadSelectedAds);
   tokenForm.addEventListener('submit', saveToken);
+  advancedSearchToggle.addEventListener('change', toggleAdvancedOptions);
+  
+  // Toggle advanced options visibility
+  function toggleAdvancedOptions() {
+    advancedOptions.style.display = advancedSearchToggle.checked ? 'block' : 'none';
+  }
   
   // Function to check if token is needed
   function checkTokenStatus() {
@@ -735,6 +930,13 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
     
     const query = searchQuery.value.trim();
     const type = searchType.value;
+    const country = countryFilter.value;
+    const limit = resultLimit.value;
+    
+    // Get advanced options if enabled
+    const useAdvancedOptions = advancedSearchToggle.checked;
+    const activeStatus = useAdvancedOptions ? adActiveStatus.value : 'ALL';
+    const adTypeValue = useAdvancedOptions ? adType.value : 'ALL';
     
     if (!query) {
       alert('Por favor, digite um termo de pesquisa.');
@@ -749,7 +951,16 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
     downloadBtn.disabled = true;
     
     try {
-      const response = await fetch(\`/api/search?query=\${encodeURIComponent(query)}&searchType=\${type}\`);
+      const searchParams = new URLSearchParams({
+        query: query,
+        searchType: type,
+        country: country,
+        limit: limit,
+        adActiveStatus: activeStatus,
+        adType: adTypeValue
+      });
+      
+      const response = await fetch(\`/api/search?\${searchParams.toString()}\`);
       const data = await response.json();
       
       // Hide loading
@@ -822,12 +1033,90 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
     let imageUrl = 'https://via.placeholder.com/300x200?text=Sem+Imagem';
     let hasVideo = false;
     
-    if (ad.ad_creative_images && ad.ad_creative_images.length > 0) {
-      imageUrl = ad.ad_creative_images[0].url;
+    // Debug: Visualizar estrutura completa do anúncio para verificar caminhos de imagem
+    console.log("Anúncio " + index + ":", JSON.stringify(ad, null, 2));
+    
+    // Função para extrair URL da imagem de um objeto de imagem
+    function extractImageUrl(imgObj) {
+      if (!imgObj) return null;
+      
+      // Tentar diferentes formatos de URL de imagem que o Facebook pode retornar
+      if (imgObj.url) return imgObj.url;
+      if (imgObj.original_image_url) return imgObj.original_image_url;
+      if (imgObj.permalink_url) return imgObj.permalink_url;
+      if (imgObj.preview_image_url) return imgObj.preview_image_url;
+      
+      // Verificar se é apenas uma string
+      if (typeof imgObj === 'string') return imgObj;
+      
+      // Verificar se tem um formato diferente
+      if (typeof imgObj === 'object') {
+        if (imgObj.media && imgObj.media.image && imgObj.media.image.src) {
+          return imgObj.media.image.src;
+        }
+      }
+      
+      return null;
     }
     
-    if (ad.ad_creative_videos && ad.ad_creative_videos.length > 0) {
-      hasVideo = true;
+    // Extrair imagens do anúncio
+    if (ad.ad_creative_images) {
+      let images = ad.ad_creative_images;
+      
+      // Às vezes o Facebook retorna como objeto em vez de array
+      if (!Array.isArray(images) && images.data) {
+        images = images.data;
+      }
+      
+      if (Array.isArray(images) && images.length > 0) {
+        const extracted = extractImageUrl(images[0]);
+        if (extracted) {
+          imageUrl = extracted;
+          console.log("Imagem do anúncio " + index + ":", imageUrl);
+        }
+      }
+    }
+    
+    // Verificar se tem vídeos
+    if (ad.ad_creative_videos) {
+      let videos = ad.ad_creative_videos;
+      
+      // Às vezes o Facebook retorna como objeto em vez de array
+      if (!Array.isArray(videos) && videos.data) {
+        videos = videos.data;
+      }
+      
+      if (Array.isArray(videos) && videos.length > 0) {
+        hasVideo = true;
+        
+        // Tentar obter a thumbnail do vídeo para exibir
+        const firstVideo = videos[0];
+        const videoThumb = extractImageUrl(firstVideo);
+        
+        if (videoThumb) {
+          imageUrl = videoThumb;
+          console.log("Thumbnail do vídeo " + index + ":", imageUrl);
+        }
+      }
+    }
+    
+    // Identificar o país do anúncio (se disponível)
+    let countryInfo = '';
+    if (ad.targeting && ad.targeting.geo_locations && ad.targeting.geo_locations.countries) {
+      const countries = ad.targeting.geo_locations.countries;
+      if (countries.includes('BR')) {
+        countryInfo = '<span class="badge bg-success">Brasil</span> ';
+      } else {
+        countryInfo = '<span class="badge bg-secondary">' + countries.join(', ') + '</span> ';
+      }
+    }
+    
+    // Formatar título, usando o primeiro título disponível ou o início do corpo do anúncio
+    let title = 'Sem Título';
+    if (ad.ad_creative_link_titles && ad.ad_creative_link_titles[0]) {
+      title = ad.ad_creative_link_titles[0];
+    } else if (ad.ad_creative_bodies && ad.ad_creative_bodies[0]) {
+      title = ad.ad_creative_bodies[0].substring(0, 50) + '...';
     }
     
     col.innerHTML = \`
@@ -837,12 +1126,12 @@ const javascriptContent = `document.addEventListener('DOMContentLoaded', () => {
             <input type="checkbox" class="ad-checkbox" data-index="\${index}">
           </div>
           \${hasVideo ? '<div class="ad-video-indicator"><i class="bi bi-play-fill"></i> Vídeo</div>' : ''}
-          <img src="\${imageUrl}" class="ad-image" alt="Ad creative">
+          <img src="\${imageUrl}" class="ad-image" alt="Ad creative" onerror="this.onerror=null;this.src='https://via.placeholder.com/300x200?text=Imagem+Indisponível';">
         </div>
         <div class="card-body">
-          <div class="ad-advertiser">\${ad.page_name || 'Anunciante Desconhecido'}</div>
+          <div class="ad-advertiser">\${ad.page_name || 'Anunciante Desconhecido'} \${countryInfo}</div>
           <div class="ad-date">Data de Início: \${startDate}</div>
-          <h5 class="card-title">\${ad.ad_creative_link_titles?.[0] || 'Sem Título'}</h5>
+          <h5 class="card-title">\${title}</h5>
           <p class="card-text">\${ad.ad_creative_bodies?.[0] || 'Sem descrição'}</p>
           <a href="\${ad.ad_creative_link_url || '#'}" class="ad-link" target="_blank">\${ad.ad_creative_link_url || ''}</a>
           <div class="d-flex justify-content-between">
